@@ -1,0 +1,23 @@
+services:
+  makemycoffee:
+    build: .
+    image: makemycoffee:latest
+    container_name: makemycoffee
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - REFRESH_TOKEN=${REFRESH_TOKEN}
+      - DSN=${DSN}
+      - PORT=8000
+      - CREDS_FILE=/data/credentials.json
+      - DELONGHI_EMAIL=${DELONGHI_EMAIL}
+      - DELONGHI_PASSWORD=${DELONGHI_PASSWORD}
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; r=requests.get('http://localhost:8000/health'); r.raise_for_status()"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
