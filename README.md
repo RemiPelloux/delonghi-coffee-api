@@ -181,8 +181,7 @@ The ECAM protocol has no payload encryption. The only replay protection is the U
 
 ## Credits
 
-- Protocol validation: [home_assistant_delonghi_primadonna](https://github.com/Arbuzov/home_assistant_delonghi_primadonna) by Arbuzov — independently implemented the same protocol
-- Reverse engineering tools: `apktool`, `jadx`, `mitmproxy`
+Reverse engineering tools: `apktool`, `jadx`, `mitmproxy`
 
 ---
 
