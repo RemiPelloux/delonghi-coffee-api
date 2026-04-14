@@ -2,9 +2,9 @@
 
 > Control your DeLonghi coffee machine locally via a REST API — no app required.
 
-Reverse-engineered from the official **Coffee Link** Android app. Uses the **ECAM binary protocol** over the Ayla Networks cloud to send commands directly to your machine.
+Reverse-engineered from the official **Coffee Link** Android app. Uses the **ECAM binary protocol** over the Ayla Networks cloud to send commands directly to your machine. Full technical write-up in [`docs/writeup.md`](docs/writeup.md).
 
-Works with any DeLonghi machine supported by the Coffee Link app (Primadonna, Maestosa, Dinamica, etc.)
+Works with any DeLonghi machine supported by the Coffee Link app (Primadonna, Maestosa, Dinamica, Eletta, etc.)
 
 ---
 
@@ -14,29 +14,53 @@ Works with any DeLonghi machine supported by the Coffee Link app (Primadonna, Ma
 - **Power on / off** from standby
 - **Stop** a brew mid-way
 - **Machine state** — ready, heating, dispensing, alarms
-- **Auto token refresh** — logs back in automatically when the session expires
-- **Docker ready** — one command to deploy on a Raspberry Pi or any server
-- **REST API + Swagger UI** at `/docs`
+- **Auto token refresh** — re-authenticates via Gigya automatically when the 24h session expires
+- **Docker ready** — one command to deploy on a Raspberry Pi or any Linux box
+- **Swagger UI** at `/docs`
 
 ---
 
-## How it works
-
-The DeLonghi Coffee Link app doesn't talk directly to the machine over LAN — it routes all commands through the **Ayla Networks IoT cloud**. Each command is a binary **ECAM packet** (16 bytes), encoded in Base64 with a Unix timestamp appended, and written to a cloud property called `data_request`. The machine polls this property and executes the command.
-
-This API reconstructs those packets from scratch using the verified binary format extracted from the APK.
+## Repository Structure
 
 ```
-Your request → ECAM binary packet → CRC-CCITT → Base64 + timestamp
-    → Ayla cloud (data_request property)
-    → Machine executes
+delonghi-coffee-api/
+├── api.py              # FastAPI server — the main deployable
+├── lan_client.py       # CLI tool for quick testing
+├── Dockerfile
+├── compose.yaml
+├── requirements.txt
+├── .env.example        # Copy to .env and fill in your credentials
+├── data/               # Token persistence (git-ignored)
+└── docs/
+    ├── writeup.md      # Full reverse engineering write-up
+    ├── protocol.md     # ECAM binary protocol reference
+    └── skills.md       # AI agent quick reference (endpoint list)
 ```
-
-> Full write-up: [reverse engineering a coffee machine with apktool, mitmproxy and jadx](#)
 
 ---
 
-## Quick start
+## How It Works
+
+The DeLonghi Coffee Link app does not talk directly to the machine — it routes all commands through the **Ayla Networks IoT cloud**. Each command is a binary **ECAM packet**, appended with a Unix timestamp, Base64-encoded, and written to a cloud property called `data_request`. The machine polls this property and executes the command.
+
+This API reconstructs those packets from scratch using the binary format reverse-engineered from the APK.
+
+```
+Your request
+  → ECAM binary packet (16 bytes)
+  → CRC-CCITT checksum (seed 0x1D0F)
+  → append Unix timestamp (4 bytes big-endian)
+  → Base64 encode
+  → POST to Ayla cloud (data_request property)
+  → Machine executes
+```
+
+**Full write-up:** [`docs/writeup.md`](docs/writeup.md)
+**Protocol reference:** [`docs/protocol.md`](docs/protocol.md)
+
+---
+
+## Quick Start
 
 ### 1. Find your DSN
 
@@ -55,8 +79,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-API is live at **http://localhost:8000**
-Swagger UI at **http://localhost:8000/docs**
+API is live at **http://localhost:8000** · Swagger UI at **http://localhost:8000/docs**
 
 ### 4. Make a coffee
 
@@ -79,10 +102,11 @@ curl -X POST http://localhost:8000/brew \
 | `POST` | `/power/on` | Wake machine from standby |
 | `POST` | `/power/off` | Put machine into standby |
 | `GET` | `/stats` | Usage counters (total coffees, descale water, etc.) |
+| `GET` | `/properties` | All raw Ayla device properties |
 | `GET` | `/health` | Liveness probe for Docker |
 | `GET` | `/docs` | Swagger UI |
 
-### Available beverages
+### Available Beverages
 
 `espresso` · `regular` · `long` · `2x_espresso` · `doppio` · `americano` · `hot_water` · `steam`
 
@@ -92,22 +116,22 @@ curl -X POST http://localhost:8000/brew \
 
 ```bash
 # Copy files to your Pi
-rsync -av . pi@192.168.1.x:~/delonghi-coffee-api/
+rsync -av --exclude '.git' . tkmremi@192.168.1.x:~/delonghi-coffee-api/
 
 # SSH in and start
-ssh pi@192.168.1.x
+ssh tkmremi@192.168.1.x
 cd ~/delonghi-coffee-api
+cp .env.example .env   # fill in your credentials
 docker compose up -d
 ```
 
 ---
 
-## Running without Docker
+## Run Without Docker
 
 ```bash
 pip install -r requirements.txt
 
-# Set env vars
 export DSN=AC000W031XXXXXX
 export DELONGHI_EMAIL=your@email.com
 export DELONGHI_PASSWORD=yourpassword
@@ -117,54 +141,20 @@ python api.py
 
 ---
 
-## CLI (lan_client.py)
-
-For quick testing without the API server:
+## CLI (Quick Testing)
 
 ```bash
-# Status
 python lan_client.py status
-
-# Brew
 python lan_client.py brew regular
 python lan_client.py brew espresso
-
-# Power
+python lan_client.py stop regular
 python lan_client.py power on
 python lan_client.py power off
-
-# Stop
-python lan_client.py stop regular
 ```
 
 ---
 
-## How the ECAM protocol works
-
-Each command is a raw binary packet:
-
-```
-[0x0D][LEN][CMD_HI][CMD_LO][BEVERAGE_ID][OP][...params][CRC_HI][CRC_LO]
-```
-
-- Header is always `0x0D`
-- CRC is **CRC-CCITT** computed with seed `0x1D0F` over all bytes except the last two
-- Before sending, a **4-byte big-endian Unix timestamp** is appended to the packet, then the whole thing is Base64-encoded
-
-This format was reverse-engineered from `coffee-link.apk` using `apktool` + `jadx`, and validated against the [home_assistant_delonghi_primadonna](https://github.com/Arbuzov/home_assistant_delonghi_primadonna) project.
-
----
-
-## Compatibility
-
-Tested on:
-- DeLonghi Dinamica Plus ECAM370
-
-Should work with any machine using the **Coffee Link** app (ECAM series).
-
----
-
-## Environment variables
+## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -172,15 +162,27 @@ Should work with any machine using the **Coffee Link** app (ECAM series).
 | `DELONGHI_EMAIL` | ✅ | Your Coffee Link account email |
 | `DELONGHI_PASSWORD` | ✅ | Your Coffee Link account password |
 | `REFRESH_TOKEN` | Optional | Auto-populated after first login |
-| `CREDS_FILE` | Optional | Path to persist tokens (default: `/data/credentials.json`) |
+| `CREDS_FILE` | Optional | Token persistence path (default: `/data/credentials.json`) |
 | `PORT` | Optional | API port (default: `8000`) |
+
+---
+
+## Compatibility
+
+Tested on DeLonghi Dinamica Plus ECAM370. Should work with any machine in the ECAM series supported by the Coffee Link app.
+
+---
+
+## Security Notes
+
+The ECAM protocol has no payload encryption. The only replay protection is the Unix timestamp — the machine rejects packets older than a few seconds. Authentication is handled entirely by the Ayla cloud layer. Anyone with a valid `access_token` and the right DSN can control the machine.
 
 ---
 
 ## Credits
 
-- Protocol research: [home_assistant_delonghi_primadonna](https://github.com/Arbuzov/home_assistant_delonghi_primadonna) by Arbuzov
-- Reverse engineering: apktool, jadx, mitmproxy
+- Protocol validation: [home_assistant_delonghi_primadonna](https://github.com/Arbuzov/home_assistant_delonghi_primadonna) by Arbuzov — independently implemented the same protocol
+- Reverse engineering tools: `apktool`, `jadx`, `mitmproxy`
 
 ---
 
